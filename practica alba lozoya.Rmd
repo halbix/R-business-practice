@@ -1,0 +1,1157 @@
+---
+title: "Práctica final"
+subtitle: "Módulo de Estadística y R"
+author: "Alba Lozoya Jarabo"
+date: "`r format(Sys.time(), '%d-%m-%Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# No toquéis esta parte
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(1234)
+```
+
+
+
+# Práctica
+
+## Librerías
+
+```{r}
+library(GGally)
+library(forcats)
+library(compareGroups)
+library(MASS)
+library(dplyr)
+```
+
+## Introducción
+
+Se pretende identificar ineficiencias en el proceso de venta o factores internos y externos que pueden estar impactando el rendimiento de las mismas de una empresa de dispositivos electrónicos para las franquicias de todo el país.
+
+Las variables son las siguientes:
+
+1.	Rentabieco = Rentabilidad económica
+2.	Rentabifin = Rentabilidad financiera
+3.	Endp = Nivel de endeudamiento de las franquicias que venden estos dispositivos, valorado en euros
+4.	Liq = Liquidez monetaria de las franquicias
+5.	Productividad = ratio. Buscar la relación que puede tener con otras variables.
+6.	Coe = cuota de mercado
+7.	Edad = tiempo que llevan las franquicias operando
+8.	Conce = número de entidades que dan este mismo servicio a nivel municipio
+9.	Numac = nº accionistas
+10.	Numpa = nº participados
+11.	Numest = nº establecimientos por empresa
+12.	Estp = nº establecimientos en otras provincias
+
+
+## Ejercicio 0
+
+Teniendo en cuenta la descripción de cada variable, y los valores que véis en éstas, formatead correctamente el dataframe.
+
+```{r}
+dfinicial=readxl::read_excel("data/DatosPractica.xlsx")
+```
+
+
+```{r}
+df0= dfinicial %>%
+  select(-c(coe,REGISTRO,grupo, fju,numac,numpa,PROVINCIA)) %>% 
+  mutate(estp=factor(estp, levels = 0:1, labels = c("No", "Yes")))
+
+```
+
+
+- Eliminamos el campo "REGISTRO" ya que no es una variable.
+
+- Eliminamos grupo y fju ya que no sabemos su significado.
+
+- Eliminamos las variables numac y numpa porque no van a darnos relacion con las variables que nos importan en este negocio. y si saliera alguna relación sería cusual y no queremos considerar dicha relacion casual.
+
+- La variable estp representa  el número de establecimientos o tiendas en otras provincias y solo toma el valor 1 ó 0. Se ha categorizado. Realmente, por lo que representan, se cree que no van a ser variables significativas que vayan a explicar la varialbe ventas. Pero las mantenemos para comprobarlo.
+
+- Eliminamos la variable coe (cuota de mercado) porque está calculada en función de las demas tiendas de la franquicia por provincia, es decir, el sumatorio de coe en cada provincia es 1(ver código mostrado a continuación). Por lo tanto, tiene una correlación directa con Ventas en cada provincia y ventas es la variable que queremos predecir, por lo tanto no tendremos tampoco la variable coe.
+
+
+```{r}
+dfcoe <- dfinicial %>% 
+  mutate(
+      PROVINCIA=as.factor(PROVINCIA)
+      )
+```
+
+
+```{r}
+dfcoe %>% 
+  group_by(PROVINCIA) %>% 
+  summarise(
+    sumacoe=sum(coe)
+  )
+  
+```
+
+- En cuanto a la categorización de las provinciAs,se debe reducir el número de categorías para que el modelo sea estable. Las provincias MADRID Y BARCELONA se mantienen como categorías independientes porque se considera que tienen bastante relevancia y número de observaciones asociadas. Las demás provincias han sido clasificadas por su población según el siguiente criterio:
+
+  - Muy Grandes: población entre  1mill hasta 2.6 mill 
+  - Grandes: población entre 500.000 y 1 milón
+  - Mediana: población entre 250.000 y 500.000
+  - Pequeña: poblacion menor de 250.000
+
+- Se ha creado una nueva columna llamada GrupoProvincia en el archivo excell, que contiene dicha clasificación y se ha eliminado la variablel Provincia.
+
+
+```{r}
+dfgrupo_provincia <- df0 %>% 
+  mutate(
+        GrupoProvincia=as.factor(GrupoProvincia),
+      
+        GrupoProvincia=fct_relevel(GrupoProvincia,"MAD", "BCN", "MuyGrande","Grande", "Mediana", "Pequena")
+        
+        )
+  
+
+table(dfgrupo_provincia$GrupoProvincia)
+```
+
+
+
+- Se ha ordenado la varible GrupoProvincia ya que se trata de una variable categórica/cualitativa ordinal. Valoramos la posibilidad de unir la provincia Mediana y Pequeña ya que esta última solo tiene 204 observaciones :
+
+```{r}
+dfprueba=df0 %>% 
+  mutate(
+         GrupoProvincia=if_else(GrupoProvincia=="Pequena","Mediana", GrupoProvincia),
+         
+         GrupoProvincia=as.factor(GrupoProvincia),
+         
+         GrupoProvincia=fct_relevel(GrupoProvincia,"MAD", "BCN", "MuyGrande","Grande", "Mediana")
+  
+         )
+
+table(dfprueba$GrupoProvincia)
+```
+
+
+
+
+Dejamos finalmente 5 categorias uniendo las pequeñas con las medianas y llamamos a este dataset definitivo "df":
+```{r}
+
+df=dfprueba
+
+```
+
+ 
+- Se modifica el nombre de la variable "NÚMERO DE EMPLEADOS" ya que nos da algún problema:
+```{r}
+
+df=df %>% 
+  rename( nempleados= `NÚMERO DE EMPLEADOS`)
+```
+
+
+- Creo una copia de mi dataframe con los cambios que he hecho hasta ahora: 
+```{r}
+df1=df
+```
+
+ 
+
+ 
+## Ejercicio 1
+
+Análisis descriptivo. Estudiar la distribución de las variables, así como detectar posibles valores atípicos o relaciones.
+
+
+
+### Distribución de las variables:
+
+Veamos los gráficos de densidad de ggpairs y los histogramas de frecuencia de las variables para ver si siguen distribuciones normales:
+
+```{r}
+ggpairs(df,
+        
+        upper = list(continuous = wrap("cor", size =2.5))
+                     
+      )
+```
+
+```{r}
+hist(df$rentabieco,main="Histograma de Rentabilidad Económica",col="pink", breaks=30,xlab="Rentabilidad Económica",ylab="Frecuencia")
+
+hist(df$rentabifin,main="Histograma de Rentabilidad Financiera",col="pink", xlab="Rentabilidad financiera",ylab="Frecuencia")
+
+hist(df$endp,main="Histograma de Nivel de endeudamiento",col="pink", xlab="Endeudamiento",ylab="Frecuencia")
+
+hist(df$liq,main="Histograma de Liquidez",col="pink", xlab="Liquidez",ylab="Frecuencia")
+
+hist(df$PRODUCTIVIDAD,main="Histograma de Productividad",col="pink", xlab="Productividad",ylab="Frecuencia")
+
+hist(df$VENTAS,main=" Histograma de Ventas",col="pink", xlab="Ventas",ylab="Frecuencia")
+
+hist(df$nempleados,main="Histograma de Número de empleados",col="pink", xlab="Empleados",ylab="Frecuencia")
+
+hist(df$edad,main="Histograma de Edad de la franquicia",col="pink", xlab="Edad",ylab="Frecuencia")
+
+hist(df$numest,main="Número de establecimientos por empresa",col="pink", xlab="Número de establecimientos por empresa",ylab="Frecuencia")
+
+hist(df$conce,main="Número de tiendas que dan este servicio en el mismo municipio",col="pink", xlab="Tiendas")
+```
+
+
+
+
+Viendo estos gráficos de densidad y los histogramas realizados , podemos concluir que las variables no siguen distribuciones normales. Aun así, lo verificamos con un test de normalidad:
+
+
+
+```{r}
+shapiro.test(df$rentabieco)
+shapiro.test(df$rentabifin)
+shapiro.test(df$endp)
+shapiro.test(df$liq)
+shapiro.test(df$PRODUCTIVIDAD)
+shapiro.test(df$VENTAS)
+shapiro.test(df$nempleados)
+shapiro.test(df$edad)
+shapiro.test(df$conce)
+shapiro.test(df$numest)
+
+  
+  
+```
+
+Tras realizar los test de normalidad (shapiro).  La hipotesis nula es que las variables siguen una districución normal. Vemos que la probabilidad pvalor es mucho menor que alpha=0.05.(tomando confianza del 95%) Por tanto rechazamos la hipoteis nula, y concluimos que ninguna variable sigue una distribución normal.
+
+A continuación,tomaremos el logaritmo de las variables numericas positivas para eliminar el efecto de las unidades y así suavizar los posibles picos.Ademas necesitamos que nuestra variable independiente sea noramal o esté lo mas normalizada posible para realizar el modelo predictivo mediante una función lineal.
+
+Las variables de rentabilidad tienen valores negativos por lo que no podemos tomar sus logaritmos.
+Comprobamos que la variable Productividad tiene valores negativos también:
+
+```{r}
+sum(df$PRODUCTIVIDAD<=0)
+```
+
+
+Observamos que en productividad hay 13 valores negativos, y eso no tiene mucho sentido en un ratio. Tenemos dos opciones:
+
+- Estimamos un valor para la variable productividad en aquellos casos que tenemos valor negativo. De este modo, podremos usar las demas variables de dichas observaciones.
+
+- Eliminar esas observacions. Hay 4.403 observaciones, por lo que perder 13 no supone un porcentaje alto.
+En este caso, elimino esas observaciones:
+
+```{r}
+df=df %>% 
+  filter(PRODUCTIVIDAD>0)
+
+```
+
+
+Esta podría ser la solución alternativa:
+```{r}
+#df=df %>% 
+ # mutate(PRODUCTIVIDAD=if_else(PRODUCTIVIDAD<0,NaN, PRODUCTIVIDAD))
+#sum(is.na(df))
+
+```
+
+```{r}
+#library(mice)
+#temp=mice(df,m=1)
+#df=complete(temp)
+#sum(is.na(df))
+```
+
+
+Tomamos ahora los logaritmos :
+```{r}
+df <- df %>% 
+  mutate(
+         endp=log1p(endp),
+         liq=log(liq),
+         PRODUCTIVIDAD=log(PRODUCTIVIDAD),
+         VENTAS=log(VENTAS),
+         nempleados=log(nempleados),
+         edad=log1p(edad),
+         conce=log(conce),
+         numest=log(numest)
+         ) 
+```
+
+
+
+```{r}
+shapiro.test(df$rentabieco)
+shapiro.test(df$rentabifin)
+shapiro.test(df$endp)
+shapiro.test(df$liq)
+shapiro.test(df$PRODUCTIVIDAD)
+shapiro.test(df$VENTAS)
+shapiro.test(df$nempleados)
+shapiro.test(df$edad)
+shapiro.test(df$conce)
+shapiro.test(df$numest)
+
+  
+  
+```
+
+Tomando logaritmos no hemos conseguido que las varialbes sigan unas distribución normal , pero han tomado una distribución más favorable de cara a realizar el modelo predictivo lineal y también para buscar los outliers. 
+
+Veamos unos gráficos para ver como se han quedado las variables tras tomar el logaritmo y fijémonos también en los valores atípicos en los boxplot que, ahora que hemos tomado logaritmos, se habrán reducido.
+
+
+
+
+#### VENTAS
+```{r}
+hist(df$VENTAS,main="Histograma de Ventas",col="pink", xlab="Ventas",ylab="Frecuencia")
+boxplot(df$VENTAS,col = "white", horizontal = TRUE, border = "4", xlab="Ventas", main="Boxplot de Ventas")
+```
+
+Juntamos los gráficos para entenderlos mejor:
+```{r}
+layout(mat = matrix(c(1, 2), 2, 1, byrow = TRUE), height = c(3, 1))
+par(mar = c(3.1, 3.1, 1.1, 2.1))
+hist(df$VENTAS, main="Histograma y boxplot de Ventas",breaks=20, col = "pink")
+boxplot(df$VENTAS, horizontal = TRUE, outline = TRUE, frame = FALSE,    col = "lightcyan", width = 10)
+
+
+```
+
+
+
+Busquémos los valores de estos ouliers y su índice de fila:
+```{r}
+out <- boxplot.stats(df$VENTAS)$out
+out
+out_ind <- which(df$VENTAS %in% c(out))
+out_ind
+```
+
+Veamos a qué grupo de provincias corresponden estos outliers:
+
+```{r}
+
+df[673,]$GrupoProvincia
+
+```
+
+
+```{r}
+
+df[860,]$GrupoProvincia
+```
+
+
+```{r}
+
+df[2598,]$GrupoProvincia
+```
+
+
+Vemos que los 3 outliers son de Madrid y Barcelona. Puede que estas tiendas de ciudades tan singulares tengas valores altos de ventas y no necesariamente sean outliers comparadas con las ventas de Madrid y Barcelona. Hagamos un boxplot de un dataframe que contenga sólo las tiendas de Madrid y Barcelona. Si esto ocurre, podemos plantearnos hacer dos modelos predictivos más adelante, uno para Madrid y Barcelona y otro con las demás provincias.
+
+
+```{r}
+dfMadBcn=df %>% 
+  filter(GrupoProvincia=="BCN" | GrupoProvincia=="MAD") %>% 
+  mutate(
+        GrupoProvincia=droplevels(GrupoProvincia)
+        )
+
+```
+
+```{r}
+boxplot(dfMadBcn$VENTAS, horizontal = TRUE, outline = TRUE, frame = FALSE,    col = "lightcyan", width = 10)
+
+out <- boxplot.stats(dfMadBcn$VENTAS)$out
+out
+
+
+
+```
+
+Se trata de los mismos puntos que nos aparecían en el boxplot del dataframe con todas las provincias, por lo que, concluimos que se pueden eliminar estos outliers aunque posiblemente sean valores reales pero muy atípicos y nada representativos.
+
+```{r}
+
+dfnew= df [-c(673,860,2598),]
+
+boxplot(dfnew$VENTAS, horizontal = TRUE, outline = TRUE, frame = FALSE,    col = "lightcyan", width = 10)
+
+```
+
+
+
+Ya han sido eliminados y vemos que ahora el boxplot sale sin outliers.
+
+
+
+
+
+#### RENTABILIDAD ECONÓMICA
+```{r}
+layout(mat = matrix(c(1, 2), 2, 1, byrow = TRUE), height = c(3, 1))
+par(mar = c(3.1, 3.1, 1.1, 2.1))
+hist(df$rentabieco, main="Histograma y boxplot de Rentabilidad Económica",breaks=20, col = "pink", xlab = "Rentabilidad Económica")
+boxplot(df$rentabieco, horizontal = TRUE, outline = TRUE, frame = FALSE, col = "lightcyan", width = 10)
+
+
+```
+
+
+
+Vemos que hay muchísimos datos que salen como outliers o valores atípicos. Sin embargo no se van a eliminar porque parecen valores reales ya que al haber tanta cantidad no puede tratarse de un error.Son valores atípicos pero válidos.
+
+
+
+
+
+#### RENTABILIDAD FINANCIERA
+
+```{r}
+
+
+layout(mat = matrix(c(1, 2), 2, 1, byrow = TRUE), height = c(3, 1))
+par(mar = c(3.1, 3.1, 1.1, 2.1))
+hist(df$rentabifin, main="Histograma y boxplot de Rentabilidad Financiera",breaks=20, col = "pink", xlab = "Rentabilidad Financiera")
+boxplot(df$rentabifin, horizontal = TRUE, outline = TRUE, frame = FALSE, col = "lightcyan", width = 10)
+```
+
+Concluimos lo mismo que con la Rentabilidad Económica, es decir, que no vamos a eliminar ningun valor outlier ya que hay una gran cantidad de ellos y sería erroneo borrarlos ya que seguramente sean valoes reales y demasiados para ser atípicos.
+
+
+
+
+
+#### NIVEL DE ENDEUDAMIENTO
+
+```{r}
+layout(mat = matrix(c(1, 2), 2, 1, byrow = TRUE), height = c(3, 1))
+par(mar = c(3.1, 3.1, 1.1, 2.1))
+hist(df$endp, main="Histograma y boxplot de Nivel de endeudamiento",breaks=20, col = "pink", xlab = "Nivel de endeudamiento")
+boxplot(df$endp, horizontal = TRUE, outline = TRUE, frame = FALSE,    col = "lightcyan", width = 10)
+```
+
+
+Misma concluisión con esta variable en cuanto al tema de outliers.
+
+
+
+
+
+
+#### LIQUIDEZ
+
+```{r}
+layout(mat = matrix(c(1, 2), 2, 1, byrow = TRUE), height = c(3, 1))
+par(mar = c(3.1, 3.1, 1.1, 2.1))
+hist(df$liq, main="Histograma y boxplot de Liquidez",breaks=20, col = "pink", xlab = "Liquidez")
+boxplot(df$liq, horizontal = TRUE, outline = TRUE, frame = FALSE,    col = "lightcyan", width = 10)
+
+```
+
+Misma concluisión con esta variable en cuanto al tema de outliers.
+
+
+
+
+
+#### PRODUCTIVIDAD
+
+```{r}
+
+layout(mat = matrix(c(1, 2), 2, 1, byrow = TRUE), height = c(3, 1))
+par(mar = c(3.1, 3.1, 1.1, 2.1))
+hist(df$PRODUCTIVIDAD, main="Histograma y boxplot de Productividad",breaks=20, col = "pink", xlab = "Productividad")
+boxplot(df$PRODUCTIVIDAD, horizontal = TRUE, outline = TRUE, frame = FALSE,    col = "lightcyan", width = 10)
+
+
+boxplot.stats(df$PRODUCTIVIDAD)$out
+```
+
+
+
+Vamos a realizar el boxplot con valores reales,sin logaritmo, ya que se entenderán mejor los valores que toma:
+ 
+ 
+```{r}
+boxplot(df0$PRODUCTIVIDAD, horizontal = TRUE, col = "lightcyan", xlab="Productividad", main="Boxplot de Productividad")
+boxplot.stats(df0$PRODUCTIVIDAD)$out
+
+
+```
+
+Observamos que al tomar logaritmos y tener valores reales cercanos a cero, el boxplot nos saca bastantes outliers por la parte izquierda del bigote debido a la tendencia de la curva del logaritmo en esa zona. Sin embargo, al observar el boxplot con los valores reales (sin logaritmos) no nos aparecen outliers en la parte izquierda.No consideraremos outliers en esa parte ya que son prodocidos al tomar los logaritmos.
+
+En la parte derecha del boxplot con los valores con logaritmo, los outliers estan bastante cerca del bigote mierntras que con los valores reales hay outliers que se alejan mucho de los bigotes. En este caso, nos guiamos por el boxplot con los logartimos y no vamos a eliminar ningun outlier ya que se consideran reales.
+
+
+
+ 
+
+
+
+#### NÚMERO DE EMPLEADOS
+```{r}
+layout(mat = matrix(c(1, 2), 2, 1, byrow = TRUE), height = c(3, 1))
+par(mar = c(3.1, 3.1, 1.1, 2.1))
+hist(df$nempleados, main="Histograma y boxplot del número de empleados",breaks=20, col = "pink")
+boxplot(df$nempleados, horizontal = TRUE, outline = TRUE, frame = FALSE,    col = "lightcyan", width = 10)
+
+```
+
+
+En esta variable no encontramos ningún outlier.
+
+
+#### EDAD DE LA FRANQUICIA
+
+```{r}
+layout(mat = matrix(c(1, 2), 2, 1, byrow = TRUE), height = c(3, 1))
+par(mar = c(3.1, 3.1, 1.1, 2.1))
+hist(df$edad, main="Histograma y boxplot edad de la franquicia",breaks=20, col = "pink")
+boxplot(df$edad, horizontal = TRUE, outline = TRUE, frame = FALSE,    col = "lightcyan", width = 10)
+
+
+```
+
+
+Parece que en este caso hay solo 1 outlier, veamos si es así:
+
+
+```{r}
+boxplot.stats(df$edad)$out
+dfedad0=df %>% 
+  filter(df$edad==0)
+
+table(dfedad0$edad)
+
+```
+
+
+Realmente hay valores repetidos, por tanto, el punto outlier del boxplot representa numerosas observaciones o tiendas que tienen edad 0 (recordamos que hemos tomado logaritmo tras sumar 1 al valor de la edad, y log1=0) . Se considera que estos outliers pueden ser reales ya que no es algo puntual(se da en 99 observaciones).
+
+
+
+
+#### NÚMERO DE ESTABLECIMIENTOS POR EMPRESA
+
+```{r}
+layout(mat = matrix(c(1, 2), 2, 1, byrow = TRUE), height = c(3, 1))
+par(mar = c(3.1, 3.1, 1.1, 2.1))
+hist(df$numest, main="Histograma y boxplot de Número de establecimientos por empresa",breaks=20, col = "pink")
+boxplot(df$numest, horizontal = TRUE, outline = TRUE, frame = FALSE,    col = "lightcyan", width = 10)
+
+
+out <- boxplot.stats(df$numest)$out
+out
+
+
+```
+
+Vemos con boxplot.stats que los posibles outliers son muchisimos valores, por lo que se va a considerar que son reales y tampoco los vamos a eliminar.
+
+Hacemos el boxplot con los valores reales para ver exactamente qué valores son los outliers:
+
+```{r}
+boxplot(df1$numest, horizontal = TRUE, outline = TRUE, frame = FALSE,    col = "lightcyan", width = 10)
+boxplot.stats(df1$numest)$out
+
+```
+
+Si miramos los valores reales (sin logaritmos) en el boxplot , vemos que son valores perfectamente factibles. Podriamos quitar el valor de 34 establecimientos al considerarlo muy atipico (aunque pueda ser real).
+
+Eliminamos el valor 34.
+
+```{r}
+which(df$numest == log(34),arr.ind=TRUE)
+```
+```{r}
+df[2746,]$GrupoProvincia
+```
+
+
+Añadimos la fila con índice 2746 a nuestro vector de indices de outliers para construir el dataframe definitivo que utilizaremos para realizar el modelo predictivo:
+
+```{r}
+dfnew= df [-c(673,860,2598,2746),]
+```
+
+
+
+
+
+#### NÚMERO DE TIENDAS QUE DAN ESTE SERVICIO EN EL MISMO MUNICIPIO
+```{r}
+
+layout(mat = matrix(c(1, 2), 2, 1, byrow = TRUE), height = c(3, 1))
+par(mar = c(3.1, 3.1, 1.1, 2.1))
+hist(df$conce, main="Número de tiendas en el mismo municipio",breaks=20, col = "pink")
+boxplot(df$conce, horizontal = TRUE, outline = TRUE, frame = FALSE,    col = "lightcyan", width = 10)
+
+
+```
+
+No hay outliers.
+
+
+
+
+### Relación entre variables
+
+```{r}
+GGally::ggpairs(df,
+        
+        upper = list(continuous = wrap("cor", size =2.5))
+                     
+      )
+```
+
+Vemos en los gráficos que hay bastante asociacion entre algunas variables:
+
+ 
+ 
+ - Ventas-nempleados: coef. correlacion=+ 0.81. Es muy lógico porque cuando hay mas ventas se cumple que hay mas empleados porque serán necesarios.
+ 
+ 
+- Ventas-productividad:coef. correlacion= +0.49. Cuando aumenta la productividad aumentan las ventas.
+ 
+ 
+ - Endp-rentabieco: coef. correlacion= -0.34 . 
+Realizamos un cor.test calculando con spearman el coeficiente de correlación ya que al no tener la variable rentabilidad económica con logaritmos , la distribución esta muy lejos de ser normal.
+
+```{r}
+ cor.test(df$rentabieco,df$endp,method="spearman")
+```
+Coeficiente correlación -0.49. Hay una ALTA relación inversa entre estas dos variables porque cuando crece el enduedamiento, la rentabilidad económica disminuye. 
+
+
+- endp-liq: coef. correlación=-0.670 . Relacion inversa entre endeudamiento y liquidez.
+
+
+
+- ventas- edad: coef. correlación=0.41. Relación interesante. Vemos que las tiendas que mas tiempo llevan abiertas, más ventas realizan, seguramente tengan también mayor numero de empleados.Veamoslo en los coeficientes del gráfico generado anteriormente.
+
+- edad-nempleados: coef. correlacion=0.51 . Se cumple lo que comentamos.
+
+
+- Conociendo el significado de las variables podemos pensar que la variable de rentabilidad financiera y rentabilidad económica pueden correlacionar bastante, comprobémoslo:
+
+
+
+
+```{r}
+cor.test(df$rentabieco,df$rentabifin,method="spearman")
+
+
+```
+
+- El coeficiente de correlación realizando el test es 0.37 por tanto hay una correlación alta tal y como esperabamos. Remarcar que el coeficiente que nos aparecía con ggpairs sale diferente y puede ser porque estas variables, al tener valores negativos, no han podido ser modificadas tomando logaritmos y por tanto el coeficiente calculado con pearson da lugar a error ya que no son variables normales ni han sido normalizadas.
+
+- nempleados- numest . coef=+0.46 Es una relación dificil de entender, podría ser que las empresas que tienen muchas tiendas , se supone que tendran un negocio con más ventas y por tanto con más empleados.
+
+- numest-ventas. Coef. correlación= +0.45 Efectivamente, como antes hemos comentado, esta realación también existe.
+
+- Ventas-GrupoProvincia
+
+```{r}
+kruskal.test(VENTAS~GrupoProvincia,df)
+```
+ Tal y como he definido las agrupaciones entre provincias, no aparece que haya relación entre ambas variables.
+ 
+ 
+ 
+
+
+#### ¿qué realcion hay entre productividad y otras variables? 
+
+
+Hemos visto en los gráficos generados con ggpairs que la correlación con ventas es +0.49.
+
+Se ha intentado descubrir exactamente a qué productividad se refiere esta variable y parece que está muy correlacionada con el cociente entre ventas por empleado. Veamoslo:
+
+```{r}
+dfratio=df1 %>% 
+ mutate(ratio=VENTAS/nempleados)
+
+
+cor.test(dfratio$ratio,dfratio$PRODUCTIVIDAD,method="spearman")
+```
+
+Vemos que efectivamente el coeficiente de correlación es muuy alto, concretamente 0.86. Por tanto, la variable productividad se calcula a partir del cociente ventas/nempleados auque con alguna modificación más. Se decide eliminar la variable productividad en nuestro modelo predictivo ya que es una variable que va a depender directamente de ventas y se calcula a partir de dicha variable objetivo.
+
+Eliminamos la variable de nuestro dataset.
+
+
+```{r}
+
+df=df %>% select(-PRODUCTIVIDAD)
+```
+
+
+
+
+
+
+
+## Ejercicio 2
+
+Análisis del Comportamiento de las Ventas y Variables que le Afectan.
+
+En el apartado anterior, ya habíamos recopilamos las relaciones más importantes con la variable Ventas. Veamos ahora detalladamente la posible relación con todas las demás variables.
+
+ - Ventas-nempleados: coef. correlacion=+ 0.81. Es muy lógico porque cuando hay mas ventas se cumple que hay mas empleados porque serán necesarios.
+  
+- Ventas- edad: coef. correlación=0.41. Relación interesante. Vemos que las tiendas que mas tiempo llevan abiertas, más ventas realizan, seguramente tengan también mayor numero de empleados.Veamoslo en los coeficientes del gráfico generado anteriormente.
+
+- Ventas- numest: Coef. correlación= +0.45 Efectivamente, como antes hemos comentado, esta realación también existe.
+
+Realizamos todos los test de asociación entre la variable ventas y las demás variables:
+
+```{r}
+cor.test(df$VENTAS,df$nempleados,method="spearman")
+cor.test(df$VENTAS,df$numest,method="spearman")
+cor.test(df$VENTAS,df$edad,method="spearman")
+cor.test(df$VENTAS,df$endp,method="spearman")
+cor.test(df$VENTAS,df$conce,method="spearman")
+cor.test(df$VENTAS,df$rentabieco,method="spearman")
+cor.test(df$VENTAS,df$liq,method="spearman")
+cor.test(df$VENTAS,df$rentabifin,method="spearman")
+
+
+```
+
+
+Asociación de ventas con las variables categóricas:
+```{r}
+
+wilcox.test(VENTAS~estp,df)
+kruskal.test(VENTAS~GrupoProvincia,df)
+```
+
+En todos los test anteriores, la hipótesis nula es la que nos dice que no hay asociación entre las dos variables testeadas.
+
+Tras realizar todos los test de hipótesis, podemos concluir que hay  asociación entre Ventas y todas las demás variables excepto con la variable categórica GrupoProvincia. 
+
+En todos los test de correlación nos sale un pvalor(p-value < 2.2e-16) bastante menor que alpha=0.05.Con una confianza del 95%,es decir, con un error tipo I, puedo decir que rechazo la hipótesis nula y por tanto concluir que hay asociación entre la variable Ventas y las demas variables estudiadas.
+
+En el caso de la asociación de ventas con Rentabilidad financiera, el test nos dice que hay asociación pero pvalor (la probabilidad de que la hipotesis nula sea cierta) ya no es tan pequeño como en los otros casos ( de hecho el coeficiente de  correlación que sale es bastante bajo -0.046).Por tanto, en este caso, hay asociación pero sabemos que la correlación es baja.
+
+
+En los test de asociación de ventas con las variables categóricas, vemos que hay realación con la varaible estp (número de establecimientos en otras provincias) pero no hay relación con la variable Grupo Provincia. Podríamos buscar otra manera de agrupar las provincias para buscar que haya asociación con ventas, y así poder incluirl la variable GrupoProvincias en el modelo de predicción de ventas. 
+
+
+
+
+## Ejercicio 3
+
+Realizar una tabla de contingencia entre Ventas y Número de empleados, una vez categorizadas ambas variables, para número de empleados, por ejemplo, la utilizada a nivel Europeo, la cual divide a las empresas en Microempresas (1-9 trabajadores), Pequeña empresa (10-49 trabajadores), Mediana empresa (50-249 trabajadores) y Gran empresa (250 y más trabajadores)).
+
+Usaremos del data frame df1 que no tiene los logaritmos realizados sobre las variables para poder entender mejor los valores que toman dichas variables.
+
+Para la categorización de la variables, es muy útil realizar un boxplot y ver en las tablas los valores de los cuartiles, así podremos agrupar de tal manera que las categorias sean muy representativas y tengan un numero parecido de observaciones en cada una de ellas.
+
+```{r}
+
+
+summary(df1$nempleados)
+
+
+```
+ 
+
+  
+```{r}
+layout(mat = matrix(c(1, 2), 2, 1, byrow = TRUE), height = c(3, 1))
+par(mar = c(3.1, 3.1, 1.1, 2.1))
+hist(df1$nempleados, main="Histograma y boxplot de número de empleados",breaks=30,xlim = c(0, 150), col = "pink", xlab = "Numero de empleados")
+boxplot(df1$nempleados, horizontal = TRUE, outline = TRUE, ylim = c(0,150), frame = FALSE, 
+    col = "lightcyan", width = 10)
+```
+
+
+Vemos que a la derecha del valor del bigote en la variable empleados hay muchísimos valores que serían teoricamente outliers, pero ya vimos en el apartado 1, que al tomar logaritmos , los ouliers desaparecen (usamos el dataframe df que ya tiene los logaritmos tomados):
+
+```{r}
+boxplot(df$nempleados, horizontal = TRUE, col="lightcyan", xlab="log(Empleados)", main="Boxplot del número de empleados")
+```
+
+
+
+Hacemos la agrupacion por número de empleados  teniendo en cuenta los cuartiles que nos habian salido de la variable número de empleados (nempleados):
+
+
+```{r}
+dfe=df1 %>% 
+  mutate(tipotienda=case_when(
+    nempleados<3 ~ "MiniMicro",
+    nempleados>=3 & nempleados<7 ~ "Micro", 
+    nempleados>=7 & nempleados<=21 ~"Pequena",
+    TRUE ~ "Mediana"
+  ))
+
+
+table(dfe$tipotienda)
+
+```
+
+
+Ordenamos las categorías:
+
+```{r}
+dfe <- dfe %>% 
+  mutate(
+      tipotienda=as.factor(tipotienda),
+      tipotienda=fct_relevel(tipotienda,"MiniMicro", "Micro","Pequena", "Mediana")
+      )
+```
+
+```{r}
+table(dfe$tipotienda)
+```
+
+
+Ahora procedemos de la misma forma para la variable VENTAS.
+
+```{r}
+
+summary(df1$VENTAS)
+
+
+layout(mat = matrix(c(1, 2), 2, 1, byrow = TRUE), height = c(3, 1))
+par(mar = c(3.1, 3.1, 1.1, 2.1))
+hist(df1$VENTAS, main="Histograma y boxplot de número de empleados",breaks=30, col = "pink", xlab = "Numero de empleados")
+boxplot(df1$VENTAS, horizontal = TRUE, outline = TRUE, frame = FALSE, 
+    col = "lightcyan", width = 10)
+
+
+```
+
+
+
+Ocurre los mismo que con la variable Numero de empleados, es decir, al hacer los logaritmos ya vimos en el apartado 1 que se ruducían los outliers y eliminamos las 3 observaciones que seguian saliendose del rango en el boxplot. 
+Veamos como quedaba el boxplot con los logaritmos en los valores de ventas:
+
+```{r}
+boxplot(dfnew$VENTAS,xlab="Log(Ventas)",main="Boxplot de de ventas" , col="lightcyan",horizontal = TRUE)
+```
+
+
+
+Realizamos las categorías con los valores cuartílicos que nos salieron en el summary:
+
+
+```{r}
+dfe=dfe %>% 
+  mutate(ventascat=case_when(
+  
+    VENTAS<500 ~ "< 500", 
+    
+    VENTAS>500 & VENTAS<1600 ~"500-1.600",
+    
+    VENTAS>1600 & VENTAS<8000 ~"1.600-8.000",
+   
+    TRUE ~ ">8.000"
+    
+  ))
+
+```
+
+
+Ordenamos las categorías:
+
+```{r}
+dfe <- dfe %>% 
+  mutate(
+      ventascat=as.factor(ventascat),
+      ventascat=fct_relevel(ventascat,"< 500","500-1.600","1.600-8.000", "> 8.000")
+      )
+table(dfe$ventascat)
+```
+
+
+Realizamos la comparación de estas nuevas variables categorizadas:
+
+```{r}
+table(dfe$ventascat,dfe$tipotienda)
+round(prop.table(table(dfe$ventascat,dfe$tipotienda)) * 100, 2)
+
+```
+
+
+Veamos otra tabla que nos da unos porcentajes por categorías:
+
+```{r}
+gmodels::CrossTable(dfe$ventascat,dfe$tipotienda)
+
+```
+
+
+
+- En la categoria de ventas "<500" que supone un 25,3% de mis observaciones, vemos que el 58.1% se dan en la categoria MiniMicro tienda, el 35.1% en Micro tienda y un 6.5% en la pequeña tienda. Esto quiere decir, que las ventas mas bajas se realizan en tiendas de menor tamaño (menor número de empleados).
+
+- En la categoría de ventas entre "500 y 1600 que supone un 24.8% de las observaciones, vemos que el 35.7% de dichas ventas se da en Micro tiendas, un  31.8% en pequeñas tiendas y  un 31% en MiniMicro tiendas. Por tanto, veo que al pasar al siguiente rango de ventas, tambien me aparecen con un porcentaje alto las tiendas pequeñas.Volvemos a concluir lo mismo que antes, es decir, que las ventas un poco mas altas se dan en tiendas de tamaño mayor.
+
+- Para ventas entre 1600 y 8000 euros(que supone el 25.2% de las observaciones), vemos que la mayoria de estas ventas (54.4%) se realizan en tiendas pequeñas, seguido de las tiendas Micro (22.4%) y tiendas medianas (14.0%).
+
+- En la siguiente categoria de ventas (>8.000) ocurre que la mayoria de las ventas se dan en tiendas medianas (84.3%), seguido de las tiendas pequeñas 13.4%.
+
+
+En todas las categorías sacamos la misma conclusión: hay una relación clara entre las ventas y el tamaño de la tienda, las ventas mas bajas se dan en las tiendas más pequeñas, y las ventas más altas en las tiendas de mayor tamaño (en cuanto a número de empleados).
+
+Si estudiamos el gráfico de otra manera, tenemos:
+
+En cuanto a las Minimicro tiendas:
+
+  - El 59% de las MiniMicro tiendas tienen ventas < de 500 euros.
+  - El 30.9% de las MiniMicro tiendas tienen ventas entre 500 y 1600 euros.
+  - El 9.4% de las MiniMicro tiendas tienen ventas entre 1600 y 8000 euros.
+ 
+En cuanto a las Micro tiendas:
+
+  - El 37.3% de las Micro tiendas tienen ventas < de 500 euros.
+  - El 37.3% de las Micro tiendas tienen ventas entre 500 y 1600 euros.
+  - El 23.7% de las Micro tiendas tienen ventas entre 1600 y 8000 euros.
+
+En cuanto a las tiendas Pequeñas:
+  
+  - El 29.8% de las tiendas pequeñas tienen ventas entre 500 y 1600 euros.
+  - El 51.7% de las tiendas pequeñas tienen ventas entre 1600 y 8000 euros.
+  - El 12.4% de las tiendas pequeñas tienen ventas entre >8000 euros.
+
+En cuanto a las tiendas Medianas:
+  
+  - El 14.2% de las tiendas medianas tienen ventas entre 1600 y 8000 euros.
+  - El 83.9% de las tiendas medianas tienen ventas entre >8000 euros. 
+ 
+
+
+Conclusión: las tiendas de mayor tamaño, tienen un valor de ventas mayor.
+
+
+
+## Ejercicio 4
+
+Comparar las ventas entre Madrid y Barcelona. 
+
+Teníamos creado este dataframe:
+
+
+```{r}
+
+dfMadBcn=df %>% 
+  filter(GrupoProvincia=="BCN" | GrupoProvincia=="MAD") %>% 
+  mutate(
+        GrupoProvincia=droplevels(GrupoProvincia)
+        )
+
+
+table(dfMadBcn$GrupoProvincia)
+
+```
+
+```{r}
+
+plot(VENTAS~GrupoProvincia,dfMadBcn)
+
+
+res <- compareGroups(GrupoProvincia ~ VENTAS, data = dfMadBcn, method = 4)
+restab <- createTable(res, show.p.overall = F)
+export2md(restab, format = "html")
+
+```
+Tras observar el boxplot y la tabla de compareGroups, vemos que las ventas en ambas provincias son muy similares ya que la mediana es muy parecida y los cuartiles también.
+
+
+```{r}
+wilcox.test(VENTAS~GrupoProvincia,dfMadBcn)
+```
+
+La hipotesis nula sería que no hay asociación entre ventas y la provincia Madrid o Barcelona. Vemos que debemos aceptar esa hipótesis y eso también nos sirve para confirmar que con nuestros datos, no podemos decir que las ventas de Madrid y Barcelona sean diferentes.
+
+## Ejercicio 5
+
+Presentación del modelo de predicción de las ventas para el siguiente año y describirla adecuadamente.
+
+Creamos un modelo predictivo de ventas con todas las variables del dataframe donde hemos eliminado los outliers (dfnew). Vamos a eliminar la variable Productiviad ya que finalmente concluimos que no ibamos a usar dicha variable porque se calcula a partir del valor de ventas.
+
+
+```{r}
+dfnew=dfnew %>% 
+
+select(-PRODUCTIVIDAD)
+```
+
+
+
+```{r}
+
+full.model=lm(VENTAS ~ .,dfnew)
+summary(full.model)
+
+```
+
+Veo que hay variables que no son significativas en mi modelo: edad, est.
+El R^2 ajustado es 0.6957
+
+```{r}
+car::vif(full.model)
+```
+No hay valores>5. se supone que no hay multicolineallidad entre las variables independientes.
+
+
+```{r}
+step.model= stepAIC(full.model,direction="both",trace=FALSE)
+summary(step.model)
+```
+
+Aplicando el criterio de AKaike vemos que esas variables se pueden eliminar  y r^2 ajustado no se modifica.
+
+Seguimos eliminando variables hasta que veamos que el R^2 disminuye significativamente:
+
+Eliminamos la variable grupoProvincia ya que tampoco tiene a penas significancia:
+```{r}
+modelp=lm(formula = VENTAS ~  rentabieco + rentabifin + endp + liq + 
+    nempleados + conce + numest , data = dfnew)
+summary(modelp)
+```
+ El modelo sigue con un R^2 muy parecido: 0.6948
+ 
+ Eliminamos la variable liquidez:
+```{r}
+modelp=lm(formula = VENTAS ~   rentabieco + rentabifin + endp  + 
+    nempleados + conce + numest, data = dfnew)
+summary(modelp)
+```
+
+
+El modelo sigue con un R^2 muy parecido: 0.6937
+Eliminemos ahora la variable rentabilidad financiera:
+
+```{r}
+modelp=lm(formula = VENTAS ~    rentabieco  + endp  + 
+    nempleados + conce + numest, data = dfnew)
+summary(modelp)
+```
+El modelo sigue con un R^2 muy parecido: 0.6927
+Eliminemos ahora la variable endp(nivel de endeudamiento) :
+
+```{r}
+modelp=lm(formula =  VENTAS ~  rentabieco  + nempleados + conce + 
+    numest, data = dfnew)
+summary(modelp)
+
+
+```
+R^2 a penas se modifica: 0.6916
+Eliminemos ahora la variable rentabilidad económica:
+ 
+ 
+```{r}
+modelp=lm(formula =  VENTAS ~     nempleados + conce + 
+    numest, data = dfnew)
+summary(modelp)
+```
+Seguimos eliminando variables hasta que veamos que el R^2 disminuye significativamente:
+Eliminamos la variable conce (número de establecimientos que ofrecen el mismo servicio a nivel municipio)
+
+```{r}
+modelp=lm(formula =  VENTAS ~  nempleados +  numest, data = dfnew)
+summary(modelp)
+```
+El valor de R^2 ahora es 0.6713
+
+Vamos a eliminar la variable numest:
+
+
+```{r}
+modelp=lm(formula =  VENTAS ~  nempleados , data = dfnew)
+summary(modelp)
+```
+ El valor de R^2 ahora es 0.6646.
+ 
+ 
+Finalmente vamos a optar por seleccionar el modelo predictivo de ventas en funcion de las variables número de empleados (nempleados), número de establecimientos que ofrecen el mismo servicio a nivel municipio (conce) y número de establecimientos por empresa (numest). 
+
+Con este modelo predictivo final podemos explicar el 68.4% de la variabilidad de Ventas. 
+
+Podríamos elegir un modelo con menos variables perdiendo un 1 o 2% de explicabilidad. Sin embargo, consideramos que un modelo con 3 variables es bastante viable y estable y no queremos renunciar a ese 2% de explicabilidad de ventas.
+
+```{r}
+modelofinal=lm(formula =  VENTAS ~   nempleados+conce+numest , data = dfnew)
+summary(modelofinal)
+```
+
+Veamos los errores del modelo:
+ 
+```{r}
+plot(modelofinal)
+```
+
+```{r}
+shapiro.test(modelofinal$residuals)
+```
+
+- Gráfico Residuals Vs fitted . En este gráfico buscamos ver la dispersión respecto de la recta para cada valor predicho (cuánto se alejan de nuestro ajuste). En nuestro caso, se ajustan bastante a la recta, aunque tenemos algún outlier con residuos muy grandes.
+
+- Gráfico Q-Q. Este gráfico muestra cómo se acumulan los residuos respecto de los cuantiles teóricos de una distribución normal. Si la distribución de residuos es normal, los veremos cercanos a la recta. Desviaciones de la recta indican que la distribución de los residuos no es normal. En nuestro gráfico, vemos que la mayoría de los datos están cercanos a la recta pero en los laterales tenemos observaciones que se alejan bastante. De hecho haciendo el test de normalidad a los residuos , vemos que no son normales.
+
+- Gráfico scale-location. Este gráfico es similar al primero, pero los residuos están estandarizados. Vemos algunos outliers también pero a nivel general, está bastante bien.
+
+- Gráfico Residuals VS Leverage. En este gráfico buscamos los puntos influyentes  que son aquellos con gran palanca o leverage.Vemos que aquellos puntos que están muy alejados  tienen gran influencia sobre el ajuste de la recta. En particular, si estos puntos no se alinean bien con el patrón general de los datos, pueden forzar el modelo hacia un ajuste erróneo.
+En nuestro caso tenemos algunos puntos outliers pero no nos levanan mucho la curva.
+
+
+
+Podemos intentar quitar algunos outliers para ver si mejoramos el modelo:
+
+
+```{r}
+dfnew2= dfnew [-c(2549,2162),]
+
+newmodel2=lm(formula =  VENTAS ~   nempleados+conce+numest  
+     , data = dfnew2)
+summary(newmodel2)
+plot(newmodel2)
+shapiro.test(newmodel2$residuals)
+```
+Observamos que al quitar estos 2 outliers, el R^2 ha subido a 0.6867, pero sigo teniendo en los gráficos de residuos puntos que son outliers. Ademas seguimos teniendo residuos no normales.
+
+
+Viendo los gráficos , vamos a validar el modelo ya que la mayoria de los puntos tienen unos residuos aceptables y asumibles. 
+
+
+El modelo queda como Ventas= 5.01823 + 1.02932  nempleados +  0.14323 conce +  0.27546 numest    
+
+R^2 ajustado de  0.6867
+
+
+### Modelo predictivo de ventas en Madrid y Barcelona
+
+Creamos un modelo predictivo específico para las ventas en Madrid y Barcelonoa para ver si se consigue una mayor explicabilidad de la variable ventas.
+
+
+
+
+```{r}
+
+full.modelMadBcn=lm(VENTAS ~ .,dfMadBcn)
+summary(full.modelMadBcn)
+
+```
+
+Vemos que no hay mejoría usando un modelo específicio para Madrid y Barcelona ya que soy capaz de explicar el 68% de la variabilidad de Ventas (un porcentaje en linea con el modelo que teníamos inicaialemente con todas las provincias juntas). 
+
+
+
+
+
+
+
+
+
+
+
